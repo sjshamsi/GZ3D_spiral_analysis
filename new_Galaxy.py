@@ -35,7 +35,7 @@ class SpiralGalaxy(object):
         self.global_df_loaded = False
         self.bpt_masks_loaded = False
         self.r_array_loaded = False
-        self.coor_matrix_loaded = False
+        self.corr_matrix_loaded = False
         self.sfr_cov_loaded = False
         self.ha_cov_loaded = False
         
@@ -44,17 +44,10 @@ class SpiralGalaxy(object):
         return 'MaNGA ID {}'.format(self.mangaid)
     
     
-    def form_corellation_matrix(self):
-        if not self.coor_matrix_loaded:
-            shape_list = np.load('shape_list.npy')
-
-            for i in range(len(shape_list)):
-                if shape_list[i][0] == self.map_shape[0]:
-                    index = i
-
-            self.corr_matrix = np.load('coor_matrix_list.npy')[index]
-            
-            self.coor_matrix_loaded = True
+    def form_correllation_matrix(self):
+        if not self.corr_matrix_loaded:
+            self.corr_matrix = np.load('corr_matrices/corr_matrix' + str(self.map_shape[0]) + '.npy')
+            self.corr_matrix_loaded = True
     
     
     def check_usability(self, threshold = 5, pix_percentage = 1.5):
@@ -107,9 +100,16 @@ class SpiralGalaxy(object):
             self.r_array_loaded = True
     
         
-    def get_arms_spaxel_mask(self, mask_threshold=3):
+    def update_spirals(self, spiral_threshold=3, bar_threshold=3):
         self.data.make_all_spaxel_masks(grid_size = self.map_shape)
-        self.arms_spaxel_mask = self.data.spiral_mask_spaxel > mask_threshold
+        
+        arms_spaxel_mask = self.data.spiral_mask_spaxel > spiral_threshold
+        bar_spaxel_mask = self.data.bar_mask_spaxel > bar_threshold
+        
+        common_spaxels = np.bitwise_and(arms_spaxel_mask, bar_spaxel_mask)
+        spiral_mask = np.bitwise_and(arms_spaxel_mask, ~common_spaxels)
+        
+        self.df['Spiral Arm'] = spiral_mask.flatten()
         
     
     def load_btp_masks(self):
@@ -140,31 +140,28 @@ class SpiralGalaxy(object):
     
     def form_global_df(self):
         if not self.global_df_loaded:
-            self.get_arms_spaxel_mask()
             self.load_btp_masks()
             self.make_r_array()
             self.make_emmasks()
-
+            
             ha_array = self.hamap.value.flatten()
             sig_ha_array = self.hamap.error.value.flatten()
-
+            
             hb_array = self.hbmap.value.flatten()
             sig_hb_array = self.hbmap.error.value.flatten()
-
-            spax_type_array = self.arms_spaxel_mask.flatten()
-
+                        
             comp_array = self.comp.flatten()
             agn_array = self.agn.flatten()
             seyfert_array = self.seyfert.flatten()
             liner_array = self.liner.flatten()
-
-            data_array = np.array([self.r_array, ha_array, sig_ha_array, hb_array, sig_hb_array, spax_type_array,
+            
+            data_array = np.array([self.r_array, ha_array, sig_ha_array, hb_array, sig_hb_array,
                                    comp_array, agn_array, seyfert_array, liner_array]).transpose()
-
+            
             df = pd.DataFrame(data=data_array, columns=['Radius', '$H_{\\alpha}$', '$\sigma H_{\\alpha}$', 
-                                                        '$H_{\\beta}$', '$\sigma H_{\\beta}$', 'Spiral Arm',
+                                                        '$H_{\\beta}$', '$\sigma H_{\\beta}$',
                                                         'Comp', 'AGN', 'Seyfert', 'Liner'])
-
+            
             df = df.replace([np.inf, -np.inf], np.nan)
             
             df.iloc[self.ha_mask_array, df.columns.get_loc('$H_{\\alpha}$')] = np.nan
@@ -182,6 +179,8 @@ class SpiralGalaxy(object):
             df['$r/r_e$'] = df['Radius'] / self.eff_rad
             
             self.df = df
+            
+            self.update_spirals()
             
             self.global_df_loaded = True
             
@@ -203,7 +202,7 @@ class SpiralGalaxy(object):
     
     
     def make_cov_matrices(self, mode=None):
-        self.form_corellation_matrix()
+        self.form_correllation_matrix()
         
         if mode == None:
             raise ValueError('Argument "mode" must be set to "sfr" or "ha".')
@@ -226,7 +225,7 @@ class SpiralGalaxy(object):
         w_vec = np.array([[x in index for x in tot_index]]) * 1
                 
         if mode == None:
-            raise ValueError('Argument "mode" must be "sfr" or "ha"')
+            raise ValueError('Argument "mode" must be "sfr" or "ha".')
         elif mode == 'ha':
             self.make_cov_matrices(mode=mode)
             cov_mat = self.ha_cov
