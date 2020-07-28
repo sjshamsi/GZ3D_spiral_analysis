@@ -5,7 +5,7 @@ import numpy as np
 from numpy.linalg import multi_dot
 
 import sys
-sys.path.insert(0, '/raid5/homes/sshamsi/galaxy_zoo/GZ3D_production')
+sys.path.insert(0, '/home/sshamsi/spirals/GZ3D_production')
 
 import gz3d_fits
 
@@ -85,31 +85,38 @@ class SpiralGalaxy(object):
 
             a, b = self.map_shape
             k, h = (a - 1) / 2.0, (b - 1) / 2.0 #map centre
-
+            
             for y, x in [(y, x) for y in range(a) for x in range(b)]:
                 j, i = (-1 * (y - k), x - h) #vector from centre
-
+                
                 spax_angle = (np.arctan(j / i)) - self.theta
                 vec_len = (j**2.0 + i**2.0)**0.5
                 r = vec_len * ((np.cos(spax_angle))**2.0 + ((np.sin(spax_angle))/self.elpetro_ba)**2.0)**0.5
-
+                
                 r_array = np.append(r_array, r)
-
+                
             self.r_array = r_array
             
             self.r_array_loaded = True
     
         
-    def update_spirals(self, spiral_threshold=3, bar_threshold=3):
+    def update_spirals(self, spiral_threshold=3, other_threshold=3, ret_spiral_bool=False):
         self.data.make_all_spaxel_masks(grid_size = self.map_shape)
         
-        arms_spaxel_mask = self.data.spiral_mask_spaxel > spiral_threshold
-        bar_spaxel_mask = self.data.bar_mask_spaxel > bar_threshold
+        center_mask_spaxel_bool = self.data.center_mask_spaxel > other_threshold
+        star_mask_spaxel_bool = self.data.star_mask_spaxel > other_threshold
+        bar_mask_spaxel_bool = self.data.bar_mask_spaxel > other_threshold
+        spiral_mask_spaxel_bool = self.data.spiral_mask_spaxel > spiral_threshold
         
-        common_spaxels = np.bitwise_and(arms_spaxel_mask, bar_spaxel_mask)
-        spiral_mask = np.bitwise_and(arms_spaxel_mask, ~common_spaxels)
+        combined_mask = center_mask_spaxel_bool | star_mask_spaxel_bool | bar_mask_spaxel_bool
         
-        self.df['Spiral Arm'] = spiral_mask.flatten()
+        spiral_spaxel_bool = spiral_mask_spaxel_bool & (~combined_mask)
+        
+        if ret_spiral_bool:
+            return spiral_spaxel_bool
+        
+        self.spiral_spaxel_bool = spiral_spaxel_bool
+        self.df['Spiral Arm'] = spiral_spaxel_bool.flatten()
         
     
     def load_btp_masks(self):
@@ -138,7 +145,7 @@ class SpiralGalaxy(object):
         return sfr, sfr_stdv
     
     
-    def form_global_df(self, spiral_threshold=3, bar_threshold=3):
+    def form_global_df(self, spiral_threshold=3, other_threshold=3):
         if not self.global_df_loaded:
             self.load_btp_masks()
             self.make_r_array()
@@ -146,21 +153,23 @@ class SpiralGalaxy(object):
             
             ha_array = self.hamap.value.flatten()
             sig_ha_array = self.hamap.error.value.flatten()
+            ha_snr = self.hamap.snr.flatten()
             
             hb_array = self.hbmap.value.flatten()
             sig_hb_array = self.hbmap.error.value.flatten()
+            hb_snr = self.hbmap.snr.flatten()
             
             comp_array = self.comp.flatten()
             agn_array = self.agn.flatten()
             seyfert_array = self.seyfert.flatten()
             liner_array = self.liner.flatten()
             
-            data_array = np.array([self.r_array, ha_array, sig_ha_array, hb_array, sig_hb_array,
+            data_array = np.array([self.r_array, ha_array, sig_ha_array, ha_snr, hb_array, sig_hb_array, hb_snr,
                                    comp_array, agn_array, seyfert_array, liner_array]).transpose()
             
-            df = pd.DataFrame(data=data_array, columns=['Radius', '$H_{\\alpha}$', '$\sigma H_{\\alpha}$', 
-                                                        '$H_{\\beta}$', '$\sigma H_{\\beta}$',
-                                                        'Comp', 'AGN', 'Seyfert', 'Liner'])
+            df = pd.DataFrame(data=data_array, columns=['Radius', '$H_{\\alpha}$', '$\sigma H_{\\alpha}$',
+                                                        'S/N $H_{\\alpha}$', '$H_{\\beta}$', '$\sigma H_{\\beta}$',
+                                                        'S/N $H_{\\beta}$', 'Comp', 'AGN', 'Seyfert', 'Liner'])
             
             df['$r/r_e$'] = df['Radius'] / self.eff_rad
             
@@ -173,14 +182,14 @@ class SpiralGalaxy(object):
             df.iloc[self.hb_mask_array, df.columns.get_loc('$\sigma H_{\\beta}$')] = np.nan
             
             df = df.replace([np.inf, -np.inf], np.nan)
-                        
+            
             self.df = df
-            self.update_spirals(spiral_threshold=spiral_threshold, bar_threshold=bar_threshold)
+            self.update_spirals(spiral_threshold=spiral_threshold, other_threshold=other_threshold)
             
             self.global_df_loaded = True
             
             
-    def cov_matrix_maker(self, err_series):        
+    def cov_matrix_maker(self, err_series):
         r = self.hamap.size
         cov_mat = np.zeros((r, r))
         
@@ -246,20 +255,3 @@ class SpiralGalaxy(object):
             return summ / n, np.sqrt(var / (n**2))
         
         return summ, np.sqrt(var)
-    
-    
-    def integrate_sfr(self, mode='all', upper_limit=1, lower_limit=0.1, avg=False):
-        df = self.df
-        
-        df = df[(df['$r/r_e$'] <= upper_limit) & (df['$r/r_e$'] >= lower_limit)]
-        df = df[(df.Comp == 0) & (df.AGN == 0) & (df.Seyfert == 0) & (df.Liner == 0)]
-        
-        df = df.dropna()
-        
-        if mode == 'spirals':
-            df = df[df['Spiral Arm'] == 1]
-            
-        if mode == 'non-spirals':
-            df = df[df['Spiral Arm'] == 0]
-                
-        return self.get_sfr(df.index, avg=avg)
