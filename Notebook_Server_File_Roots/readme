@@ -1,0 +1,4 @@
+06/01/2021
+What is this folder? When we implement the code across multiple platforms, we inevitebly need to change some file paths for things to work. This is simply a folder containing numpy .npy files which we can load with np.load and retreive a string for the file path whenever we need to use things.
+
+We form a similar folder for every platform, and make it a part of .gitignore so we don't have to see it on the GITHub page.

@@ -1,4 +1,4 @@
 .ipynb_checkpoints
-/corr_matrices
-/make_correlation_matrices
 __pycache__/
+Matrices/cov_matrices
+Matrices/corr_matrices
